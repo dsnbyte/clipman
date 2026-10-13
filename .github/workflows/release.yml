@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build & Release (${{ matrix.target }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact_name: clipman-x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          echo "Previous tag: $PREV_TAG"
+          
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log "$PREV_TAG..HEAD" --pretty=format:"* %s ([%h](https://github.com/dsnbyte/clipman/commit/%H))")
+          else
+            CHANGES=$(git log --pretty=format:"* %s ([%h](https://github.com/dsnbyte/clipman/commit/%H))")
+          fi
+
+          DELIMITER=$(openssl rand -hex 8)
+          echo "body<<$DELIMITER" >> "$GITHUB_OUTPUT"
+          echo "### 🚀 What's Changed" >> "$GITHUB_OUTPUT"
+          if [ -n "$CHANGES" ]; then
+            echo "$CHANGES" >> "$GITHUB_OUTPUT"
+          else
+            echo "* Initial release" >> "$GITHUB_OUTPUT"
+          fi
+          echo "$DELIMITER" >> "$GITHUB_OUTPUT"
+
+      - name: Package release archive
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/clipman dist/
+          tar -czvf ${{ matrix.artifact_name }}.tar.gz -C dist clipman
+          sha256sum ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Clipman ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            ${{ matrix.artifact_name }}.tar.gz
+            ${{ matrix.artifact_name }}.tar.gz.sha256
+          generate_release_notes: true

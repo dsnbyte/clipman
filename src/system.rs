@@ -182,7 +182,7 @@ pub fn autostart_enabled() -> bool {
 
 pub fn desktop_entry(exe: &Path, autostart: bool) -> String {
     let mut s = format!(
-        "[Desktop Entry]\nType=Application\nName=Clipman\nComment=Lightweight clipboard manager\n\
+        "[Desktop Entry]\nType=Application\nName=Clipman\nComment=Fast, lightweight clipboard manager for Linux\n\
          Exec={}\nIcon=edit-paste\nTerminal=false\nCategories=Utility;\nStartupWMClass=clipman\n",
         exe.display()
     );

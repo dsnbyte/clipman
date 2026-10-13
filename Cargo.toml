@@ -2,6 +2,10 @@
 name = "clipman"
 version = "0.1.0"
 edition = "2024"
+description = "A fast, lightweight clipboard manager for Linux (optimized for GNOME & Ubuntu)"
+repository = "https://github.com/dsnbyte/clipman"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.104"

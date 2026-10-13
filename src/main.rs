@@ -13,7 +13,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 const HELP: &str = "\
-Clipman — lightweight clipboard manager for Ubuntu
+Clipman — A fast, lightweight clipboard manager for Linux (optimized for GNOME & Ubuntu)
 
 USAGE:
     clipman                Start the background service (or open the window if already running)
