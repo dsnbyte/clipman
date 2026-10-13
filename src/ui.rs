@@ -537,8 +537,8 @@ impl Root {
         div()
             .id(("row", ix))
             .group("row")
+            .w_full()
             .h(px(ROW_H))
-            .mx_2()
             .px_2()
             .flex()
             .items_center()
@@ -654,7 +654,7 @@ impl Root {
             .flex_col()
             .child(self.search_bar(t, cx))
             .child(self.filter_bar(t, cx))
-            .child(div().flex_1().min_h(px(0.)).child(body))
+            .child(div().flex_1().min_h(px(0.)).px_2().child(body))
             .child(
                 div()
                     .flex()
@@ -924,7 +924,7 @@ pub fn run(settings: bool) {
                 }),
                 focus: true,
                 show: true,
-                kind: WindowKind::Normal,
+                kind: WindowKind::Floating,
                 is_movable: false,
                 is_resizable: false,
                 is_minimizable: false,
