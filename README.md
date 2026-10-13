@@ -17,8 +17,7 @@ Clipman adalah aplikasi clipboard manager yang dibangun khusus untuk Ubuntu meng
   - **Privasi**: Otomatis mendeteksi hint password manager (`x-kde-passwordManagerHint`) dan fitur pause capture.
 - **Tray Icon di Title Bar / Top Bar Ubuntu**:
   - Menggunakan protokol `StatusNotifierItem` / `AppIndicator` (`ksni`).
-  - Menampilkan riwayat clipboard terkini langsung di menu klik tray.
-  - Menu: Open Clipman, Pause Capturing, Settings, Quit.
+  - Menu instan & responsif tanpa delay: Open Clipman, Pause Capturing, Settings, Quit.
 - **Tampil di Tengah Layar (Centered Dialog)**:
   - Dialog pop-up GPUI otomatis tampil di tengah layar monitor utama.
   - Tampilan otomatis mengikuti tema sistem Ubuntu (Dark / Light mode).

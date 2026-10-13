@@ -5,7 +5,7 @@ use crate::clipboard::{self, ClipHandle, Limits};
 use crate::config::Config;
 use crate::model::*;
 use crate::store::Store;
-use crate::tray::{self, ClipTray};
+use crate::tray::ClipTray;
 use crate::{ipc, system};
 use anyhow::Result;
 use image::ImageFormat;
@@ -119,7 +119,6 @@ impl Daemon {
         if let Err(e) = result {
             log::warn!("failed to record clipboard item: {e}");
         }
-        self.refresh_tray();
     }
 
     /// Writes the PNG and a small thumbnail; returns the image size.
@@ -159,14 +158,12 @@ impl Daemon {
                 Ok(Some(p)) => {
                     self.clip.set(p);
                     let _ = self.store.touch(id);
-                    self.refresh_tray();
                 }
                 _ => log::warn!("item {id} not found"),
             },
             Cmd::Refresh => {
                 self.cfg = Config::load();
                 let _ = self.store.trim(self.cfg.max_items);
-                self.refresh_tray();
             }
             Cmd::TogglePause => {
                 self.paused = !self.paused;
@@ -179,16 +176,8 @@ impl Daemon {
 
     fn refresh_tray(&mut self) {
         let Some(handle) = &self.tray else { return };
-        let recent: Vec<(i64, String)> = self
-            .store
-            .list(Filter::All, "", 8, 0)
-            .unwrap_or_default()
-            .iter()
-            .map(|it| (it.id, tray::menu_label(it)))
-            .collect();
         let paused = self.paused;
         handle.update(|t| {
-            t.recent = recent;
             t.paused = paused;
         });
     }
