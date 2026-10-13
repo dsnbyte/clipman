@@ -2,11 +2,6 @@
 
 > **A fast, lightweight clipboard manager for Linux (optimized for GNOME & Ubuntu)**
 
-[![GitHub Release](https://img.shields.io/github/v/release/dsnbyte/clipman?color=blue&logo=github)](https://github.com/dsnbyte/clipman/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Linux-orange.svg?logo=linux)]()
-[![Rust](https://img.shields.io/badge/Rust-2024%20Edition-black.svg?logo=rust)]()
-
 **Clipman** is an ultra-fast, minimalist clipboard manager designed for the Linux desktop. Powered by **Rust** and **GPUI** (the GPU-accelerated UI framework developed for the Zed editor), Clipman runs a lightweight background daemon consuming just **~11 MB of RAM** while providing an instant popup selector in under 80 milliseconds.
 
 ---
