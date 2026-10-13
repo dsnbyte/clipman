@@ -34,7 +34,7 @@ actions!(
 );
 
 const ROW_H: f32 = 62.0;
-const LIST_LIMIT: usize = 500;
+const PAGE_SIZE: usize = 20;
 const SIZES: [usize; 7] = [25, 50, 100, 200, 500, 1000, 2000];
 
 // ---- assets ---------------------------------------------------------------
@@ -85,11 +85,14 @@ fn is_dark(appearance: WindowAppearance) -> bool {
     if matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark) {
         return true;
     }
-    std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("prefer-dark"))
-        .unwrap_or(false)
+    static CACHED_DARK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED_DARK.get_or_init(|| {
+        std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("prefer-dark"))
+            .unwrap_or(false)
+    })
 }
 
 fn theme(appearance: WindowAppearance) -> Theme {
@@ -142,6 +145,7 @@ struct Root {
     query: String,
     filter: Filter,
     items: Vec<ItemMeta>,
+    has_more: bool,
     selected: usize,
     was_active: bool,
     recording: bool,
@@ -153,7 +157,7 @@ struct Root {
 
 impl Root {
     fn new(settings: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let store = Store::open().expect("cannot open history database");
+        let store = Store::open_quick().expect("cannot open history database");
         let focus = cx.focus_handle();
         focus.focus(window);
 
@@ -177,6 +181,7 @@ impl Root {
             query: String::new(),
             filter: Filter::All,
             items: Vec::new(),
+            has_more: false,
             selected: 0,
             was_active: false,
             recording: false,
@@ -185,8 +190,11 @@ impl Root {
             shortcut: None,
             autostart: false,
         };
-        root.items = root.store.list(root.filter, "", LIST_LIMIT).unwrap_or_default();
-        root.load_system_state();
+        root.items = root.store.list(root.filter, "", PAGE_SIZE, 0).unwrap_or_default();
+        root.has_more = root.items.len() == PAGE_SIZE;
+        if settings {
+            root.load_system_state();
+        }
         root
     }
 
@@ -198,12 +206,31 @@ impl Root {
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.items = self
             .store
-            .list(self.filter, &self.query, LIST_LIMIT)
+            .list(self.filter, &self.query, PAGE_SIZE, 0)
             .unwrap_or_default();
+        self.has_more = self.items.len() == PAGE_SIZE;
         if self.selected >= self.items.len() {
             self.selected = self.items.len().saturating_sub(1);
         }
         cx.notify();
+    }
+
+    fn load_more(&mut self, cx: &mut Context<Self>) {
+        if !self.has_more {
+            return;
+        }
+        let offset = self.items.len();
+        if let Ok(more) = self.store.list(self.filter, &self.query, PAGE_SIZE, offset) {
+            if more.len() < PAGE_SIZE {
+                self.has_more = false;
+            }
+            if !more.is_empty() {
+                self.items.extend(more);
+                cx.notify();
+            }
+        } else {
+            self.has_more = false;
+        }
     }
 
     fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -218,6 +245,9 @@ impl Root {
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         let next = (self.selected as isize + delta).clamp(0, self.items.len() as isize - 1);
         self.select(next.max(0) as usize, cx);
+        if self.selected + 5 >= self.items.len() && self.has_more {
+            self.load_more(cx);
+        }
     }
 
     fn set_filter(&mut self, f: Filter, cx: &mut Context<Self>) {
@@ -626,6 +656,9 @@ impl Root {
                 "items",
                 n,
                 cx.processor(move |this, range: Range<usize>, _window, cx| {
+                    if range.end + 5 >= this.items.len() && this.has_more {
+                        this.load_more(cx);
+                    }
                     let now = now_secs();
                     range
                         .map(|ix| {
@@ -678,7 +711,11 @@ impl Root {
                             .child(hint("Esc", "close"))
                             .into_any_element(),
                     })
-                    .child(format!("{} item{}", n, if n == 1 { "" } else { "s" })),
+                    .child(if self.has_more {
+                        format!("{}+ items", n)
+                    } else {
+                        format!("{} item{}", n, if n == 1 { "" } else { "s" })
+                    }),
             )
     }
 
@@ -886,7 +923,48 @@ impl Render for Root {
     }
 }
 
-/// Opens the window and runs until it is closed.
+enum UiCmd {
+    Show,
+    Toggle,
+    Settings,
+    Quit,
+    CheckIdle,
+}
+
+fn open_main_window(cx: &mut App, settings: bool) {
+    let bounds = Bounds::centered(None, size(px(620.), px(560.)), cx);
+    let opened = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Clipman".into()),
+                appears_transparent: true,
+                ..Default::default()
+            }),
+            focus: true,
+            show: true,
+            kind: WindowKind::Floating,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Transparent,
+            app_id: Some("clipman".into()),
+            window_decorations: Some(WindowDecorations::Client),
+            ..Default::default()
+        },
+        |window, cx| {
+            window.activate_window();
+            cx.new(|cx| Root::new(settings, window, cx))
+        },
+    );
+    if let Err(e) = opened {
+        eprintln!("clipman: cannot open window: {e}");
+        return;
+    }
+    cx.activate(true);
+}
+
+/// Opens the window and runs until closed or idle timeout expires.
 pub fn run(settings: bool) {
     Application::new().with_assets(Assets).run(move |cx: &mut App| {
         cx.bind_keys([
@@ -906,43 +984,122 @@ pub fn run(settings: bool) {
             KeyBinding::new("escape", Close, Some("ClipmanList")),
             KeyBinding::new("escape", Close, Some("ClipmanSettings")),
         ]);
-        cx.on_window_closed(|cx| {
+
+        open_main_window(cx, settings);
+
+        let (cmd_tx, cmd_rx) = async_channel::unbounded::<UiCmd>();
+
+        // Thread to read control commands from daemon via stdin
+        let stdin_tx = cmd_tx.clone();
+        std::thread::Builder::new()
+            .name("ui-stdin".into())
+            .spawn(move || {
+                use std::io::BufRead;
+                let stdin = std::io::stdin();
+                for line in stdin.lock().lines().flatten() {
+                    let cmd = match line.trim() {
+                        "show" => Some(UiCmd::Show),
+                        "toggle" => Some(UiCmd::Toggle),
+                        "settings" => Some(UiCmd::Settings),
+                        "quit" => Some(UiCmd::Quit),
+                        _ => None,
+                    };
+                    if let Some(cmd) = cmd {
+                        if stdin_tx.send_blocking(cmd).is_err() {
+                            break;
+                        }
+                    }
+                }
+                let _ = stdin_tx.send_blocking(UiCmd::Quit);
+            })
+            .ok();
+
+        // Idle timer ticker: checks every 10 seconds
+        let idle_tx = cmd_tx.clone();
+        std::thread::Builder::new()
+            .name("ui-idle-ticker".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    if idle_tx.send_blocking(UiCmd::CheckIdle).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok();
+
+        // Notify idle check when window closes
+        let close_tx = cmd_tx.clone();
+        cx.on_window_closed(move |cx| {
             if cx.windows().is_empty() {
-                cx.quit();
+                let _ = close_tx.send_blocking(UiCmd::CheckIdle);
             }
         })
         .detach();
 
-        let bounds = Bounds::centered(None, size(px(620.), px(560.)), cx);
-        let opened = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Clipman".into()),
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
-                focus: true,
-                show: true,
-                kind: WindowKind::Floating,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                window_background: WindowBackgroundAppearance::Transparent,
-                app_id: Some("clipman".into()),
-                window_decorations: Some(WindowDecorations::Client),
-                ..Default::default()
-            },
-            |window, cx| {
-                window.activate_window();
-                cx.new(|cx| Root::new(settings, window, cx))
-            },
-        );
-        if let Err(e) = opened {
-            eprintln!("clipman: cannot open window: {e}");
-            cx.quit();
-            return;
-        }
-        cx.activate(true);
+        // Background task on GPUI event loop
+        let async_cx = cx.to_async();
+        cx.foreground_executor()
+            .spawn(async move {
+                let mut closed_at: Option<std::time::Instant> = None;
+                const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+                while let Ok(cmd) = cmd_rx.recv().await {
+                    let res = async_cx.update(|cx| {
+                        match cmd {
+                            UiCmd::Show => {
+                                closed_at = None;
+                                if cx.windows().is_empty() {
+                                    open_main_window(cx, false);
+                                } else {
+                                    for h in cx.windows() {
+                                        let _ = h.update(cx, |_, window, _| window.activate_window());
+                                    }
+                                }
+                            }
+                            UiCmd::Toggle => {
+                                if cx.windows().is_empty() {
+                                    closed_at = None;
+                                    open_main_window(cx, false);
+                                } else {
+                                    closed_at = Some(std::time::Instant::now());
+                                    for h in cx.windows() {
+                                        let _ = h.update(cx, |_, window, _| window.remove_window());
+                                    }
+                                }
+                            }
+                            UiCmd::Settings => {
+                                closed_at = None;
+                                if cx.windows().is_empty() {
+                                    open_main_window(cx, true);
+                                } else {
+                                    for h in cx.windows() {
+                                        if let Some(root_h) = h.downcast::<Root>() {
+                                            let _ = root_h.update(cx, |root, _window, cx| root.open_settings(cx));
+                                        }
+                                    }
+                                }
+                            }
+                            UiCmd::CheckIdle => {
+                                if cx.windows().is_empty() {
+                                    let t = closed_at.get_or_insert_with(std::time::Instant::now);
+                                    if t.elapsed() >= IDLE_TIMEOUT {
+                                        cx.quit();
+                                    }
+                                } else {
+                                    closed_at = None;
+                                }
+                            }
+                            UiCmd::Quit => {
+                                cx.quit();
+                            }
+                        }
+                    });
+                    if res.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
     });
 }

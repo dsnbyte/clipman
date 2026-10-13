@@ -28,6 +28,7 @@ struct Daemon {
     tray: Option<Handle<ClipTray>>,
     paused: bool,
     ui: Option<Child>,
+    ui_in: Option<std::process::ChildStdin>,
     exe: PathBuf,
 }
 
@@ -66,6 +67,7 @@ pub fn run(start: Start) -> Result<()> {
         tray,
         paused: false,
         ui: None,
+        ui_in: None,
         exe: exe.clone(),
     };
     d.refresh_tray();
@@ -90,6 +92,7 @@ pub fn run(start: Start) -> Result<()> {
             Msg::Cmd(cmd) => d.on_cmd(cmd),
         }
     }
+    let _ = d.send_to_ui("quit");
     d.kill_ui();
     ipc::cleanup();
     Ok(())
@@ -138,20 +141,19 @@ impl Daemon {
     fn on_cmd(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Toggle => {
-                if self.ui_alive() {
-                    self.kill_ui();
-                } else {
+                if !self.send_to_ui("toggle") {
                     self.open_ui(false);
                 }
             }
             Cmd::Show => {
-                if !self.ui_alive() {
+                if !self.send_to_ui("show") {
                     self.open_ui(false);
                 }
             }
             Cmd::Settings => {
-                self.kill_ui();
-                self.open_ui(true);
+                if !self.send_to_ui("settings") {
+                    self.open_ui(true);
+                }
             }
             Cmd::Copy(id) => match self.store.payload(id) {
                 Ok(Some(p)) => {
@@ -179,7 +181,7 @@ impl Daemon {
         let Some(handle) = &self.tray else { return };
         let recent: Vec<(i64, String)> = self
             .store
-            .list(Filter::All, "", 8)
+            .list(Filter::All, "", 8, 0)
             .unwrap_or_default()
             .iter()
             .map(|it| (it.id, tray::menu_label(it)))
@@ -198,13 +200,30 @@ impl Daemon {
             Some(Ok(None)) => true,
             _ => {
                 self.ui = None;
+                self.ui_in = None;
                 false
             }
         }
     }
 
+    fn send_to_ui(&mut self, cmd: &str) -> bool {
+        if self.ui_alive() {
+            if let Some(stdin) = self.ui_in.as_mut() {
+                use std::io::Write;
+                if writeln!(stdin, "{cmd}").is_ok() && stdin.flush().is_ok() {
+                    return true;
+                }
+            }
+        }
+        self.ui = None;
+        self.ui_in = None;
+        false
+    }
+
     fn open_ui(&mut self, settings: bool) {
         if self.ui_alive() {
+            let cmd = if settings { "settings" } else { "show" };
+            self.send_to_ui(cmd);
             return;
         }
         let mut cmd = Command::new(&self.exe);
@@ -212,14 +231,18 @@ impl Daemon {
         if settings {
             cmd.arg("--settings");
         }
-        cmd.stdin(Stdio::null()).stdout(Stdio::null());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::null());
         match cmd.spawn() {
-            Ok(child) => self.ui = Some(child),
+            Ok(mut child) => {
+                self.ui_in = child.stdin.take();
+                self.ui = Some(child);
+            }
             Err(e) => log::error!("cannot start UI: {e}"),
         }
     }
 
     fn kill_ui(&mut self) {
+        self.ui_in = None;
         if let Some(mut c) = self.ui.take() {
             let _ = c.kill();
             let _ = c.wait();

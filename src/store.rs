@@ -36,7 +36,20 @@ impl Store {
                  created_at INTEGER NOT NULL,
                  used_at    INTEGER NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS items_order ON items (pinned DESC, used_at DESC);",
+             CREATE INDEX IF NOT EXISTS items_order ON items (pinned DESC, used_at DESC, id DESC);",
+        )?;
+        Ok(Store { conn, blobs })
+    }
+
+    /// Lightweight open for UI: connects and sets pragmas without re-running DDL schema migrations.
+    pub fn open_quick() -> Result<Store> {
+        let dir = config::data_dir();
+        let blobs = dir.join("blobs");
+        let conn = Connection::open(dir.join("history.db"))?;
+        conn.busy_timeout(Duration::from_secs(3))?;
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;",
         )?;
         Ok(Store { conn, blobs })
     }
@@ -106,7 +119,7 @@ impl Store {
         self.find(hash).ok_or_else(|| anyhow::anyhow!("insert failed"))
     }
 
-    pub fn list(&self, filter: Filter, query: &str, limit: usize) -> Result<Vec<ItemMeta>> {
+    pub fn list(&self, filter: Filter, query: &str, limit: usize, offset: usize) -> Result<Vec<ItemMeta>> {
         let mut sql = String::from(
             "SELECT id, kind, preview, size, width, height, pinned, used_at, hash FROM items WHERE 1=1",
         );
@@ -123,8 +136,9 @@ impl Store {
             sql.push_str(" AND instr(search, ?) > 0");
             args.push(Value::Text(q));
         }
-        sql.push_str(" ORDER BY pinned DESC, used_at DESC, id DESC LIMIT ?");
+        sql.push_str(" ORDER BY pinned DESC, used_at DESC, id DESC LIMIT ? OFFSET ?");
         args.push(Value::Integer(limit as i64));
+        args.push(Value::Integer(offset as i64));
 
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params_from_iter(args), |r| {
